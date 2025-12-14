@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"compress_comics/internal/analyzer"
@@ -39,6 +40,20 @@ type BatchResult struct {
 	SkippedFiles    int
 	FailedFiles     int
 	TotalDuration   time.Duration
+}
+
+// FileJob represents a file to be processed by a worker
+type FileJob struct {
+	Path  string
+	Index int
+	Total int
+}
+
+// FileResult wraps Result with job context for parallel processing
+type FileResult struct {
+	Job    FileJob
+	Result *Result
+	Error  error
 }
 
 // ProgressReporter interface for flexible progress output
@@ -245,6 +260,30 @@ func (p *Pipeline) ProcessDirectory(dirPath string) (*BatchResult, error) {
 		return nil, fmt.Errorf("failed to scan directory: %w", err)
 	}
 
+	totalFiles := len(cbzFiles)
+	if totalFiles == 0 {
+		return &BatchResult{TotalFiles: 0}, nil
+	}
+
+	// Determine worker count
+	workers := p.config.Workers
+	if workers > totalFiles {
+		workers = totalFiles // No point having more workers than files
+	}
+	if workers < 1 {
+		workers = 1
+	}
+
+	// Single worker path (avoid goroutine overhead)
+	if workers == 1 {
+		return p.processDirectorySequential(cbzFiles)
+	}
+
+	return p.processDirectoryParallel(cbzFiles, workers)
+}
+
+// processDirectorySequential processes files one at a time (original behavior)
+func (p *Pipeline) processDirectorySequential(cbzFiles []string) (*BatchResult, error) {
 	batch := &BatchResult{
 		Results:    make([]Result, 0, len(cbzFiles)),
 		TotalFiles: len(cbzFiles),
@@ -288,6 +327,101 @@ func (p *Pipeline) ProcessDirectory(dirPath string) (*BatchResult, error) {
 	}
 
 	return batch, nil
+}
+
+// processDirectoryParallel processes files concurrently using a worker pool
+func (p *Pipeline) processDirectoryParallel(cbzFiles []string, numWorkers int) (*BatchResult, error) {
+	startTime := time.Now()
+	totalFiles := len(cbzFiles)
+
+	// Create a safe reporter for concurrent use
+	var safeReporter ProgressReporter
+	if p.reporter != nil {
+		safeReporter = NewSafeReporter(p.reporter)
+	}
+
+	// Create channels
+	jobs := make(chan FileJob, numWorkers)
+	results := make(chan FileResult, numWorkers)
+
+	// Start worker pool
+	var wg sync.WaitGroup
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.worker(jobs, results, safeReporter)
+		}()
+	}
+
+	// Send jobs (in separate goroutine to avoid deadlock)
+	go func() {
+		for i, path := range cbzFiles {
+			jobs <- FileJob{Path: path, Index: i + 1, Total: totalFiles}
+		}
+		close(jobs)
+	}()
+
+	// Close results when all workers done
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	batch := &BatchResult{
+		Results:    make([]Result, 0, totalFiles),
+		TotalFiles: totalFiles,
+	}
+
+	for res := range results {
+		if res.Error != nil {
+			batch.FailedFiles++
+			batch.Results = append(batch.Results, Result{
+				SourcePath: res.Job.Path,
+				Errors:     []error{res.Error},
+			})
+			continue
+		}
+
+		batch.Results = append(batch.Results, *res.Result)
+
+		if res.Result.Skipped {
+			batch.SkippedFiles++
+		} else {
+			batch.ProcessedFiles++
+			batch.TotalOriginal += res.Result.OriginalSize
+			batch.TotalCompressed += res.Result.CompressedSize
+		}
+
+		if safeReporter != nil {
+			safeReporter.OnFileComplete(*res.Result)
+		}
+	}
+
+	batch.TotalDuration = time.Since(startTime)
+
+	if p.reporter != nil {
+		p.reporter.OnBatchComplete(*batch)
+	}
+
+	return batch, nil
+}
+
+// worker processes files from the jobs channel and sends results
+func (p *Pipeline) worker(jobs <-chan FileJob, results chan<- FileResult, reporter ProgressReporter) {
+	for job := range jobs {
+		if reporter != nil {
+			reporter.OnFileStart(job.Path, job.Index, job.Total)
+		}
+
+		result, err := p.ProcessFile(job.Path)
+		results <- FileResult{
+			Job:    job,
+			Result: result,
+			Error:  err,
+		}
+	}
 }
 
 // ConsoleReporter implements ProgressReporter for terminal output
@@ -367,4 +501,55 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// SafeReporter wraps a ProgressReporter with mutex protection for concurrent use
+type SafeReporter struct {
+	reporter ProgressReporter
+	mu       sync.Mutex
+}
+
+// NewSafeReporter creates a thread-safe reporter wrapper
+func NewSafeReporter(reporter ProgressReporter) *SafeReporter {
+	return &SafeReporter{reporter: reporter}
+}
+
+func (s *SafeReporter) OnFileStart(path string, index, total int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reporter != nil {
+		s.reporter.OnFileStart(path, index, total)
+	}
+}
+
+func (s *SafeReporter) OnFileSkipped(path string, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reporter != nil {
+		s.reporter.OnFileSkipped(path, reason)
+	}
+}
+
+func (s *SafeReporter) OnImageProcessed(imagePath string, originalSize, newSize int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reporter != nil {
+		s.reporter.OnImageProcessed(imagePath, originalSize, newSize)
+	}
+}
+
+func (s *SafeReporter) OnFileComplete(result Result) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reporter != nil {
+		s.reporter.OnFileComplete(result)
+	}
+}
+
+func (s *SafeReporter) OnBatchComplete(result BatchResult) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reporter != nil {
+		s.reporter.OnBatchComplete(result)
+	}
 }
