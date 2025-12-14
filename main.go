@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 
 	"compress_comics/internal/config"
 	"compress_comics/internal/processor"
@@ -23,6 +24,7 @@ func main() {
 		force       bool
 		dryRun      bool
 		verbose     bool
+		workers     int
 		showVersion bool
 	)
 
@@ -49,6 +51,9 @@ func main() {
 	flag.BoolVar(&verbose, "verbose", false, "Show detailed progress")
 	flag.BoolVar(&verbose, "v", false, "Verbose (shorthand)")
 
+	flag.IntVar(&workers, "workers", runtime.NumCPU(), "Number of parallel workers for directory processing")
+	flag.IntVar(&workers, "w", runtime.NumCPU(), "Parallel workers (shorthand)")
+
 	flag.BoolVar(&showVersion, "version", false, "Show version information")
 
 	flag.Usage = func() {
@@ -62,7 +67,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -input ./comics -recursive\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -input ./comics -dry-run -verbose\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -input ./comics -q 85 -max-dim 1600\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -input ./comics -force\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -input ./comics -force\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -input ./comics -w 4\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 	}
@@ -86,6 +92,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Validate workers
+	if workers < 1 {
+		fmt.Fprintln(os.Stderr, "Error: workers must be at least 1")
+		os.Exit(1)
+	}
+
 	// Build config
 	cfg := config.Config{
 		MaxDimension:    maxDim,
@@ -96,6 +108,7 @@ func main() {
 		Force:           force,
 		DryRun:          dryRun,
 		Verbose:         verbose,
+		Workers:         workers,
 	}
 
 	// Create reporter
