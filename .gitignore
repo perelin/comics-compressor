@@ -1,0 +1,21 @@
+# Binaries
+cbz-compress
+hello
+*.exe
+
+# Comic files and data
+*.cbz
+*.cbr
+organized/
+originals_backup/
+
+# Test directories
+Doctor Who*/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
