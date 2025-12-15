@@ -1,0 +1,28 @@
+version: "3"
+
+vars:
+  BINARY_NAME: compress_comics
+
+tasks:
+  build:
+    desc: Build the comics binary
+    cmds:
+      - go build -o {{.BINARY_NAME}} ./
+    sources:
+      - "**/*.go"
+    generates:
+      - "{{.BINARY_NAME}}"
+
+  install:
+    desc: Install cbz-compress system-wide to $GOPATH/bin
+    deps:
+      - build
+    cmds:
+      - go install .
+
+  run:
+    desc: Build and run cbz-compress (pass args with -- e.g. task run -- -input comic.cbz)
+    deps:
+      - build
+    cmds:
+      - ./{{.BINARY_NAME}} {{.CLI_ARGS}}
