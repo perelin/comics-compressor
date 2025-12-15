@@ -1,5 +1,6 @@
 # Binaries
 cbz-compress
+compress_comics
 hello
 *.exe
 
@@ -19,3 +20,6 @@ Doctor Who*/
 .idea/
 .vscode/
 *.swp
+
+# Task runner
+.task/
