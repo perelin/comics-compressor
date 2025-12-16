@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"flag"
 	"fmt"
 	"os"
@@ -10,10 +11,26 @@ import (
 	"compress_comics/internal/processor"
 )
 
+//go:embed cbz-compress.yaml
+var embeddedConfig []byte
+
 var version = "1.0.0"
 
 func main() {
-	// Define flags
+	// Initialize embedded defaults from build-time config
+	if err := config.InitEmbedded(embeddedConfig); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing embedded config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Load runtime config file (overrides embedded defaults)
+	baseCfg, err := config.LoadWithDefaults()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config file %s: %v\n", config.DefaultConfigFileName, err)
+		os.Exit(1)
+	}
+
+	// Define flags using loaded config as defaults
 	var (
 		inputPath   string
 		backupDir   string
@@ -31,15 +48,15 @@ func main() {
 	flag.StringVar(&inputPath, "input", "", "Path to CBZ file or directory (required)")
 	flag.StringVar(&inputPath, "i", "", "Path to CBZ file or directory (shorthand)")
 
-	flag.StringVar(&backupDir, "backup", "originals_backup", "Directory to store original files")
-	flag.StringVar(&backupDir, "b", "originals_backup", "Backup directory (shorthand)")
+	flag.StringVar(&backupDir, "backup", baseCfg.BackupDir, "Directory to store original files")
+	flag.StringVar(&backupDir, "b", baseCfg.BackupDir, "Backup directory (shorthand)")
 
-	flag.IntVar(&maxDim, "max-dim", 1800, "Maximum dimension in pixels (long edge)")
-	flag.IntVar(&quality, "quality", 90, "JPEG quality (1-100)")
-	flag.IntVar(&quality, "q", 90, "JPEG quality (shorthand)")
+	flag.IntVar(&maxDim, "max-dim", baseCfg.MaxDimension, "Maximum dimension in pixels (long edge)")
+	flag.IntVar(&quality, "quality", baseCfg.JPEGQuality, "JPEG quality (1-100)")
+	flag.IntVar(&quality, "q", baseCfg.JPEGQuality, "JPEG quality (shorthand)")
 
-	flag.Float64Var(&threshold, "threshold", 1.5, "MB per page threshold for skip heuristic")
-	flag.Float64Var(&threshold, "t", 1.5, "MB per page threshold (shorthand)")
+	flag.Float64Var(&threshold, "threshold", baseCfg.ThresholdMBPage, "MB per page threshold for skip heuristic")
+	flag.Float64Var(&threshold, "t", baseCfg.ThresholdMBPage, "MB per page threshold (shorthand)")
 
 	flag.BoolVar(&recursive, "recursive", true, "Process directories recursively")
 	flag.BoolVar(&recursive, "r", true, "Recursive (shorthand)")
@@ -59,7 +76,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "CBZ Compressor v%s\n\n", version)
 		fmt.Fprintf(os.Stderr, "Compresses CBZ comic book files for tablet reading.\n")
-		fmt.Fprintf(os.Stderr, "Optimizes images to max %d pixels, JPEG quality %d.\n\n", maxDim, quality)
+		fmt.Fprintf(os.Stderr, "Optimizes images to max %d pixels, JPEG quality %d.\n\n", baseCfg.MaxDimension, baseCfg.JPEGQuality)
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  %s -input <path> [options]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Examples:\n")
@@ -71,6 +88,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -input ./comics -w 4\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nConfig file:\n")
+		fmt.Fprintf(os.Stderr, "  Place a %s file in the current directory to set defaults.\n", config.DefaultConfigFileName)
 	}
 
 	flag.Parse()
