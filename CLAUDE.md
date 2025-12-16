@@ -67,7 +67,28 @@ internal/
 - If re-encoding produces a larger file than the original JPEG, the original is kept
 - **Parallel processing**: Directory processing uses a worker pool pattern for concurrent file processing. Progress output may appear out-of-order. Thread-safety is handled via `SafeReporter` (mutex-protected) and mutex-protected backup manager.
 
+## Configuration
+
+The `cbz-compress.yaml` file controls default values. It is **embedded at build time** using `go:embed`, so the binary contains its own defaults. A runtime config file in the current directory can override embedded values.
+
+```yaml
+# cbz-compress.yaml
+max_dimension: 1800
+jpeg_quality: 90
+threshold_mb_per_page: 1.5
+backup_dir: "originals_backup"
+```
+
+Precedence (lowest to highest):
+1. Hardcoded fallbacks (safety net)
+2. Embedded config (compiled into binary at build time)
+3. Runtime config file (`./cbz-compress.yaml` in current directory)
+4. CLI flags
+
+**Build-time customization:** Edit `cbz-compress.yaml` before building to bake your preferred defaults into the binary. The file is required for building.
+
 ## Dependencies
 
 - `github.com/disintegration/imaging` - Image processing (resize, format conversion)
 - `golang.org/x/image/webp` - WebP format support
+- `gopkg.in/yaml.v3` - YAML config file parsing
