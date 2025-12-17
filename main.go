@@ -143,30 +143,42 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Print config at start
+	fmt.Println("=== Starting CBZ Compressor ===")
+	fmt.Println(cfg)
+	fmt.Println()
+
 	if dryRun {
 		fmt.Println("=== DRY RUN MODE - No files will be modified ===")
 		fmt.Println()
 	}
 
+	var exitCode int
+
 	if info.IsDir() {
 		result, err := pipeline.ProcessDirectory(inputPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		if result.FailedFiles > 0 {
-			os.Exit(1)
+			exitCode = 1
+		} else if result.FailedFiles > 0 {
+			exitCode = 1
 		}
 	} else {
 		result, err := pipeline.ProcessFile(inputPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		if len(result.Errors) > 0 {
+			exitCode = 1
+		} else if len(result.Errors) > 0 {
 			for _, e := range result.Errors {
 				fmt.Fprintf(os.Stderr, "Warning: %v\n", e)
 			}
 		}
 	}
+
+	// Print config at end
+	fmt.Println()
+	fmt.Println("=== Finished CBZ Compressor ===")
+	fmt.Println(cfg)
+
+	os.Exit(exitCode)
 }

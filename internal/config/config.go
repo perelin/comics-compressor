@@ -105,3 +105,27 @@ func LoadWithDefaults() (*Config, error) {
 	}
 	return cfg, nil
 }
+
+// String returns a formatted string representation of the config
+func (c Config) String() string {
+	return fmt.Sprintf(`Config:
+  MaxDimension:    %d px
+  JPEGQuality:     %d
+  BackupDir:       %s
+  ThresholdMBPage: %.2f MB
+  Recursive:       %t
+  Force:           %t
+  DryRun:          %t
+  Verbose:         %t
+  Workers:         %d`,
+		c.MaxDimension,
+		c.JPEGQuality,
+		c.BackupDir,
+		c.ThresholdMBPage,
+		c.Recursive,
+		c.Force,
+		c.DryRun,
+		c.Verbose,
+		c.Workers,
+	)
+}
