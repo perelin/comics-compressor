@@ -1,12 +1,10 @@
 # cbz-compress configuration file
-# This file is embedded into the binary at build time.
-# Edit before building to customize defaults.
-# A runtime cbz-compress.yaml in the current directory overrides these.
-# CLI flags override all config values.
+# Copy this file to cbz-compress.yaml and customize as needed.
+# CLI flags override these values.
 
 # Maximum dimension in pixels (width or height)
 # Images larger than this will be resized proportionally
-max_dimension: 1800
+max_dimension: 2600
 
 # JPEG quality (1-100)
 # Higher values = better quality, larger files
@@ -14,7 +12,7 @@ jpeg_quality: 90
 
 # MB per page threshold for skip heuristic
 # Files with average page size below this are considered already optimized
-threshold_mb_per_page: 1.5
+threshold_mb_per_page: 3
 
 # Directory to store original files before compression
 backup_dir: "originals_backup"
