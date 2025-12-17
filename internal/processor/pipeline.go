@@ -28,6 +28,7 @@ type Result struct {
 	SkipReason      string
 	Errors          []error
 	Duration        time.Duration
+	Analysis        *analyzer.AnalysisResult // For dry-run reporting
 }
 
 // BatchResult aggregates results for multiple files
@@ -63,6 +64,8 @@ type ProgressReporter interface {
 	OnImageProcessed(imagePath string, originalSize, newSize int64)
 	OnFileComplete(result Result)
 	OnBatchComplete(result BatchResult)
+	OnDryRunFile(result *analyzer.AnalysisResult)
+	OnDryRunComplete(summary *analyzer.DryRunSummary)
 }
 
 // Pipeline orchestrates the full compression process
@@ -113,6 +116,22 @@ func (p *Pipeline) ProcessFile(cbzPath string) (*Result, error) {
 			return nil, fmt.Errorf("analysis failed: %w", err)
 		}
 
+		// Dry run - report all files (skipped and to-process) via OnDryRunFile
+		if p.config.DryRun {
+			result.Duration = time.Since(startTime)
+			// Calculate estimated savings for files that need processing
+			p.analyzer.EstimateSavings(analysis)
+			result.Analysis = analysis
+			if !analysis.NeedsProcessing {
+				result.Skipped = true
+				result.SkipReason = analysis.SkipReason
+			}
+			if p.reporter != nil {
+				p.reporter.OnDryRunFile(analysis)
+			}
+			return result, nil
+		}
+
 		if !analysis.NeedsProcessing {
 			result.Skipped = true
 			result.SkipReason = analysis.SkipReason
@@ -122,17 +141,6 @@ func (p *Pipeline) ProcessFile(cbzPath string) (*Result, error) {
 			}
 			return result, nil
 		}
-	}
-
-	// Dry run - don't actually process, but show what would happen
-	if p.config.DryRun {
-		result.Duration = time.Since(startTime)
-		if p.reporter != nil && analysis != nil {
-			// Show why this file would be processed
-			reason := p.analyzer.FormatAnalysis(analysis)
-			fmt.Fprintf(os.Stdout, "  %s\n", reason)
-		}
-		return result, nil
 	}
 
 	// Extract CBZ
@@ -335,7 +343,19 @@ func (p *Pipeline) processDirectorySequential(cbzFiles []string) (*BatchResult, 
 	batch.TotalDuration = time.Since(startTime)
 
 	if p.reporter != nil {
-		p.reporter.OnBatchComplete(*batch)
+		// In dry-run mode, show the dry-run summary instead of batch summary
+		if p.config.DryRun {
+			analysisResults := make([]*analyzer.AnalysisResult, 0, len(batch.Results))
+			for i := range batch.Results {
+				if batch.Results[i].Analysis != nil {
+					analysisResults = append(analysisResults, batch.Results[i].Analysis)
+				}
+			}
+			summary := analyzer.NewDryRunSummary(analysisResults)
+			p.reporter.OnDryRunComplete(summary)
+		} else {
+			p.reporter.OnBatchComplete(*batch)
+		}
 	}
 
 	return batch, nil
@@ -414,7 +434,19 @@ func (p *Pipeline) processDirectoryParallel(cbzFiles []string, numWorkers int) (
 	batch.TotalDuration = time.Since(startTime)
 
 	if p.reporter != nil {
-		p.reporter.OnBatchComplete(*batch)
+		// In dry-run mode, show the dry-run summary instead of batch summary
+		if p.config.DryRun {
+			analysisResults := make([]*analyzer.AnalysisResult, 0, len(batch.Results))
+			for i := range batch.Results {
+				if batch.Results[i].Analysis != nil {
+					analysisResults = append(analysisResults, batch.Results[i].Analysis)
+				}
+			}
+			summary := analyzer.NewDryRunSummary(analysisResults)
+			p.reporter.OnDryRunComplete(summary)
+		} else {
+			p.reporter.OnBatchComplete(*batch)
+		}
 	}
 
 	return batch, nil
@@ -515,6 +547,48 @@ func formatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
+func (r *ConsoleReporter) OnDryRunFile(result *analyzer.AnalysisResult) {
+	fileName := filepath.Base(result.FilePath)
+	sizeStr := formatBytes(result.FileSize)
+
+	if result.NeedsProcessing {
+		savingsStr := fmt.Sprintf("~%s (%.0f%%)",
+			formatBytes(result.EstimatedSavingsBytes),
+			result.EstimatedSavingsPct)
+		reasonStr := strings.Join(result.ProcessingReasons, ", ")
+		fmt.Fprintf(r.writer, "  %-40s %10s  %15s  %s\n",
+			truncateString(fileName, 40), sizeStr, savingsStr, reasonStr)
+	} else {
+		fmt.Fprintf(r.writer, "  %-40s %10s  %15s  [SKIP] %s\n",
+			truncateString(fileName, 40), sizeStr, "-", result.SkipReason)
+	}
+}
+
+func (r *ConsoleReporter) OnDryRunComplete(summary *analyzer.DryRunSummary) {
+	fmt.Fprintln(r.writer)
+	fmt.Fprintln(r.writer, "=== DRY RUN SUMMARY ===")
+	fmt.Fprintf(r.writer, "Files to process: %d\n", len(summary.FilesToProcess))
+	fmt.Fprintf(r.writer, "Files to skip:    %d\n", len(summary.FilesToSkip))
+
+	if len(summary.FilesToProcess) > 0 {
+		fmt.Fprintln(r.writer)
+		fmt.Fprintln(r.writer, "ESTIMATED TOTALS:")
+		fmt.Fprintf(r.writer, "  Current size:      %s\n", formatBytes(summary.TotalCurrentSize))
+		fmt.Fprintf(r.writer, "  Estimated after:   ~%s\n", formatBytes(summary.TotalEstimatedNew))
+		fmt.Fprintf(r.writer, "  Estimated savings: ~%s (%.1f%%)\n",
+			formatBytes(summary.TotalSavings), summary.SavingsPercent)
+		fmt.Fprintln(r.writer)
+		fmt.Fprintln(r.writer, "Note: Estimates are approximate. Actual savings may vary.")
+	}
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
+
 // SafeReporter wraps a ProgressReporter with mutex protection for concurrent use
 type SafeReporter struct {
 	reporter ProgressReporter
@@ -563,5 +637,21 @@ func (s *SafeReporter) OnBatchComplete(result BatchResult) {
 	defer s.mu.Unlock()
 	if s.reporter != nil {
 		s.reporter.OnBatchComplete(result)
+	}
+}
+
+func (s *SafeReporter) OnDryRunFile(result *analyzer.AnalysisResult) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reporter != nil {
+		s.reporter.OnDryRunFile(result)
+	}
+}
+
+func (s *SafeReporter) OnDryRunComplete(summary *analyzer.DryRunSummary) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reporter != nil {
+		s.reporter.OnDryRunComplete(summary)
 	}
 }
