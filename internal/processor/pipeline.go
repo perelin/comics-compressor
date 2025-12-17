@@ -332,12 +332,16 @@ func (p *Pipeline) processDirectorySequential(cbzFiles []string) (*BatchResult, 
 		result, err := p.ProcessFile(cbzPath)
 		if err != nil {
 			batch.FailedFiles++
-			batch.Results = append(batch.Results, Result{
+			failedResult := Result{
 				SourcePath: cbzPath,
 				Errors:     []error{err},
 				Index:      i + 1,
 				Total:      totalFiles,
-			})
+			}
+			batch.Results = append(batch.Results, failedResult)
+			if p.reporter != nil {
+				p.reporter.OnFileComplete(failedResult)
+			}
 			continue
 		}
 
@@ -429,12 +433,16 @@ func (p *Pipeline) processDirectoryParallel(cbzFiles []string, numWorkers int) (
 	for res := range results {
 		if res.Error != nil {
 			batch.FailedFiles++
-			batch.Results = append(batch.Results, Result{
+			failedResult := Result{
 				SourcePath: res.Job.Path,
 				Errors:     []error{res.Error},
 				Index:      res.Job.Index,
 				Total:      res.Job.Total,
-			})
+			}
+			batch.Results = append(batch.Results, failedResult)
+			if safeReporter != nil {
+				safeReporter.OnFileComplete(failedResult)
+			}
 			continue
 		}
 
@@ -550,6 +558,13 @@ func (r *ConsoleReporter) OnFileComplete(result Result) {
 	if result.Skipped {
 		fmt.Fprintf(r.writer, "%s %-42s  [SKIP] %s\n",
 			progress, truncateString(fileName, 42), result.SkipReason)
+		return
+	}
+
+	// Handle failed files (non-dry-run)
+	if len(result.Errors) > 0 {
+		fmt.Fprintf(r.writer, "%s %-42s  [FAIL] %v\n",
+			progress, truncateString(fileName, 42), result.Errors[0])
 		return
 	}
 
