@@ -65,6 +65,7 @@ internal/
 - Non-image files (e.g., ComicInfo.xml) are preserved unchanged
 - Hidden files and macOS resource forks (__MACOSX) are skipped
 - If re-encoding produces a larger file than the original JPEG, the original is kept
+- **Idempotent operation**: The backup directory is automatically excluded from directory scans, preventing accidental re-processing of backed-up originals
 - **Parallel processing**: Directory processing uses a worker pool pattern for concurrent file processing. Progress output may appear out-of-order. Thread-safety is handled via `SafeReporter` (mutex-protected) and mutex-protected backup manager.
 
 ## Configuration

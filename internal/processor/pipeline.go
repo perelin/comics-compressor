@@ -243,10 +243,22 @@ func (p *Pipeline) ProcessDirectory(dirPath string) (*BatchResult, error) {
 	// Find all CBZ files
 	var cbzFiles []string
 
+	// Get absolute path of backup directory to skip it during walk
+	backupDirAbs, _ := filepath.Abs(p.config.BackupDir)
+
 	walkFn := func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
+
+		// Skip backup directory entirely (idempotency: never process backups)
+		if info.IsDir() {
+			absPath, _ := filepath.Abs(path)
+			if absPath == backupDirAbs {
+				return filepath.SkipDir
+			}
+		}
+
 		if !info.IsDir() && strings.ToLower(filepath.Ext(path)) == ".cbz" {
 			cbzFiles = append(cbzFiles, path)
 		}
