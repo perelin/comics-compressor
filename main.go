@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 
+	"compress_comics/internal/analyzer"
 	"compress_comics/internal/config"
 	"compress_comics/internal/processor"
 )
@@ -150,6 +151,7 @@ func main() {
 
 	if dryRun {
 		fmt.Println("=== DRY RUN MODE - No files will be modified ===")
+		fmt.Println("Analyzing files...")
 		fmt.Println()
 	}
 
@@ -168,9 +170,16 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			exitCode = 1
-		} else if len(result.Errors) > 0 {
-			for _, e := range result.Errors {
-				fmt.Fprintf(os.Stderr, "Warning: %v\n", e)
+		} else {
+			if len(result.Errors) > 0 {
+				for _, e := range result.Errors {
+					fmt.Fprintf(os.Stderr, "Warning: %v\n", e)
+				}
+			}
+			// For single file dry-run, show the summary
+			if dryRun && result.Analysis != nil {
+				summary := analyzer.NewDryRunSummary([]*analyzer.AnalysisResult{result.Analysis})
+				reporter.OnDryRunComplete(summary)
 			}
 		}
 	}
