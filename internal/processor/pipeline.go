@@ -29,6 +29,8 @@ type Result struct {
 	Errors          []error
 	Duration        time.Duration
 	Analysis        *analyzer.AnalysisResult // For dry-run reporting
+	Index           int                      // Progress: current file index (1-based)
+	Total           int                      // Progress: total files in batch
 }
 
 // BatchResult aggregates results for multiple files
@@ -324,21 +326,24 @@ func (p *Pipeline) processDirectorySequential(cbzFiles []string) (*BatchResult, 
 		TotalFiles: len(cbzFiles),
 	}
 	startTime := time.Now()
+	totalFiles := len(cbzFiles)
 
 	for i, cbzPath := range cbzFiles {
-		if p.reporter != nil {
-			p.reporter.OnFileStart(cbzPath, i+1, len(cbzFiles))
-		}
-
 		result, err := p.ProcessFile(cbzPath)
 		if err != nil {
 			batch.FailedFiles++
 			batch.Results = append(batch.Results, Result{
 				SourcePath: cbzPath,
 				Errors:     []error{err},
+				Index:      i + 1,
+				Total:      totalFiles,
 			})
 			continue
 		}
+
+		// Populate progress info
+		result.Index = i + 1
+		result.Total = totalFiles
 
 		batch.Results = append(batch.Results, *result)
 
@@ -427,6 +432,8 @@ func (p *Pipeline) processDirectoryParallel(cbzFiles []string, numWorkers int) (
 			batch.Results = append(batch.Results, Result{
 				SourcePath: res.Job.Path,
 				Errors:     []error{res.Error},
+				Index:      res.Job.Index,
+				Total:      res.Job.Total,
 			})
 			continue
 		}
@@ -470,11 +477,11 @@ func (p *Pipeline) processDirectoryParallel(cbzFiles []string, numWorkers int) (
 // worker processes files from the jobs channel and sends results
 func (p *Pipeline) worker(jobs <-chan FileJob, results chan<- FileResult, reporter ProgressReporter) {
 	for job := range jobs {
-		if reporter != nil {
-			reporter.OnFileStart(job.Path, job.Index, job.Total)
-		}
-
 		result, err := p.ProcessFile(job.Path)
+		if result != nil {
+			result.Index = job.Index
+			result.Total = job.Total
+		}
 		results <- FileResult{
 			Job:    job,
 			Result: result,
@@ -498,11 +505,11 @@ func NewConsoleReporter(verbose bool, writer io.Writer) *ConsoleReporter {
 }
 
 func (r *ConsoleReporter) OnFileStart(path string, index, total int) {
-	fmt.Fprintf(r.writer, "[%d/%d] Processing: %s\n", index, total, filepath.Base(path))
+	// No-op: output is now combined into OnFileComplete for cleaner display
 }
 
 func (r *ConsoleReporter) OnFileSkipped(path string, reason string) {
-	fmt.Fprintf(r.writer, "  [SKIP] %s\n", reason)
+	// No-op: output is now combined into OnFileComplete for cleaner display
 }
 
 func (r *ConsoleReporter) OnImageProcessed(imagePath string, originalSize, newSize int64) {
@@ -517,12 +524,41 @@ func (r *ConsoleReporter) OnImageProcessed(imagePath string, originalSize, newSi
 }
 
 func (r *ConsoleReporter) OnFileComplete(result Result) {
-	if result.Skipped {
-		return // Already reported in OnFileSkipped
+	fileName := filepath.Base(result.SourcePath)
+	progress := fmt.Sprintf("[%d/%d]", result.Index, result.Total)
+
+	// Handle dry-run mode (Analysis is populated)
+	if result.Analysis != nil {
+		analysis := result.Analysis
+		sizeStr := formatBytes(analysis.FileSize)
+
+		if analysis.NeedsProcessing {
+			savingsStr := fmt.Sprintf("~%s (%.0f%%)",
+				formatBytes(analysis.EstimatedSavingsBytes),
+				analysis.EstimatedSavingsPct)
+			reasonStr := strings.Join(analysis.ProcessingReasons, ", ")
+			fmt.Fprintf(r.writer, "%s %-42s %10s  %15s  %s\n",
+				progress, truncateString(fileName, 42), sizeStr, savingsStr, reasonStr)
+		} else {
+			fmt.Fprintf(r.writer, "%s %-42s %10s  %15s  [SKIP] %s\n",
+				progress, truncateString(fileName, 42), sizeStr, "-", analysis.SkipReason)
+		}
+		return
 	}
+
+	// Handle skipped files (non-dry-run)
+	if result.Skipped {
+		fmt.Fprintf(r.writer, "%s %-42s  [SKIP] %s\n",
+			progress, truncateString(fileName, 42), result.SkipReason)
+		return
+	}
+
+	// Handle processed files (non-dry-run)
 	if result.OriginalSize > 0 && result.CompressedSize > 0 {
 		savings := float64(result.OriginalSize-result.CompressedSize) / float64(result.OriginalSize) * 100
-		fmt.Fprintf(r.writer, "  [DONE] %s -> %s (%.1f%% saved, %d images, %v)\n",
+		fmt.Fprintf(r.writer, "%s %-42s %10s -> %10s  (%.1f%% saved, %d images, %v)\n",
+			progress,
+			truncateString(fileName, 42),
 			formatBytes(result.OriginalSize),
 			formatBytes(result.CompressedSize),
 			savings,
@@ -563,20 +599,7 @@ func formatBytes(bytes int64) string {
 }
 
 func (r *ConsoleReporter) OnDryRunFile(result *analyzer.AnalysisResult) {
-	fileName := filepath.Base(result.FilePath)
-	sizeStr := formatBytes(result.FileSize)
-
-	if result.NeedsProcessing {
-		savingsStr := fmt.Sprintf("~%s (%.0f%%)",
-			formatBytes(result.EstimatedSavingsBytes),
-			result.EstimatedSavingsPct)
-		reasonStr := strings.Join(result.ProcessingReasons, ", ")
-		fmt.Fprintf(r.writer, "  %-40s %10s  %15s  %s\n",
-			truncateString(fileName, 40), sizeStr, savingsStr, reasonStr)
-	} else {
-		fmt.Fprintf(r.writer, "  %-40s %10s  %15s  [SKIP] %s\n",
-			truncateString(fileName, 40), sizeStr, "-", result.SkipReason)
-	}
+	// No-op: output is now combined into OnFileComplete for cleaner display
 }
 
 func (r *ConsoleReporter) OnDryRunComplete(summary *analyzer.DryRunSummary) {
