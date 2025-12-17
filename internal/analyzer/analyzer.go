@@ -28,16 +28,21 @@ var supportedImageExtensions = map[string]bool{
 
 // AnalysisResult contains the quick scan results for a CBZ file
 type AnalysisResult struct {
-	FilePath       string
-	FileSize       int64   // Total file size in bytes
-	PageCount      int     // Number of images (pages)
-	MaxWidth       int     // Maximum image width found
-	MaxHeight      int     // Maximum image height found
-	MBPerPage      float64 // Megabytes per page
-	HasOversized   bool    // Any image exceeds max dimension
-	HasNonJPEG     bool    // Any image is not JPEG (PNG, GIF, etc.)
-	NeedsProcessing bool   // Final verdict: should this file be processed?
-	SkipReason     string  // Why it's being skipped (if NeedsProcessing is false)
+	FilePath        string
+	FileSize        int64   // Total file size in bytes
+	PageCount       int     // Number of images (pages)
+	MaxWidth        int     // Maximum image width found
+	MaxHeight       int     // Maximum image height found
+	MBPerPage       float64 // Megabytes per page
+	HasOversized    bool    // Any image exceeds max dimension
+	HasNonJPEG      bool    // Any image is not JPEG (PNG, GIF, etc.)
+	NeedsProcessing bool    // Final verdict: should this file be processed?
+	SkipReason      string  // Why it's being skipped (if NeedsProcessing is false)
+
+	// Estimation fields (for dry-run report)
+	EstimatedSavingsBytes int64    // Projected bytes saved
+	EstimatedSavingsPct   float64  // Projected percentage (0-100)
+	ProcessingReasons     []string // Human-readable reasons for processing
 }
 
 // Analyzer performs quick scans of CBZ files to determine if they need processing
@@ -189,4 +194,86 @@ func (a *Analyzer) FormatAnalysis(result *AnalysisResult) string {
 	}
 
 	return fmt.Sprintf("%s %s%s", status, filepath.Base(result.FilePath), reason)
+}
+
+// EstimateSavings calculates estimated compression savings for a file.
+// This populates the estimation fields in AnalysisResult using heuristics.
+// Should be called after Analyze() and only for files with NeedsProcessing=true.
+func (a *Analyzer) EstimateSavings(result *AnalysisResult) {
+	if !result.NeedsProcessing {
+		return
+	}
+
+	currentSize := float64(result.FileSize)
+	estimatedFinalSize := currentSize
+	reasons := []string{}
+
+	// Resize estimation: area reduction squared with margin
+	if result.HasOversized {
+		maxDim := float64(max(result.MaxWidth, result.MaxHeight))
+		scaleFactor := float64(a.maxDimension) / maxDim
+		if scaleFactor < 1.0 {
+			areaRatio := scaleFactor * scaleFactor
+			estimatedFinalSize *= areaRatio * 1.2 // 20% margin for JPEG overhead
+		}
+		reasons = append(reasons, fmt.Sprintf("oversized (%dx%d)", result.MaxWidth, result.MaxHeight))
+	}
+
+	// Format conversion estimation: PNG/GIF to JPEG typically saves ~35%
+	if result.HasNonJPEG {
+		estimatedFinalSize *= 0.65
+		reasons = append(reasons, "non-JPEG conversion")
+	}
+
+	// High MB/page re-encoding (only if no other triggers)
+	if result.MBPerPage > a.thresholdMBPage && !result.HasOversized && !result.HasNonJPEG {
+		estimatedFinalSize *= 0.75
+		reasons = append(reasons, fmt.Sprintf("high quality (%.1f MB/page)", result.MBPerPage))
+	}
+
+	savings := currentSize - estimatedFinalSize
+	if savings < 0 {
+		savings = 0
+	}
+
+	result.EstimatedSavingsBytes = int64(savings)
+	if currentSize > 0 {
+		result.EstimatedSavingsPct = (savings / currentSize) * 100
+	}
+	result.ProcessingReasons = reasons
+}
+
+// DryRunSummary aggregates analysis results for dry-run reporting
+type DryRunSummary struct {
+	FilesToProcess    []*AnalysisResult
+	FilesToSkip       []*AnalysisResult
+	TotalCurrentSize  int64
+	TotalEstimatedNew int64
+	TotalSavings      int64
+	SavingsPercent    float64
+}
+
+// NewDryRunSummary creates a summary from a slice of analysis results
+func NewDryRunSummary(results []*AnalysisResult) *DryRunSummary {
+	summary := &DryRunSummary{
+		FilesToProcess: make([]*AnalysisResult, 0),
+		FilesToSkip:    make([]*AnalysisResult, 0),
+	}
+
+	for _, r := range results {
+		if r.NeedsProcessing {
+			summary.FilesToProcess = append(summary.FilesToProcess, r)
+			summary.TotalCurrentSize += r.FileSize
+			summary.TotalSavings += r.EstimatedSavingsBytes
+		} else {
+			summary.FilesToSkip = append(summary.FilesToSkip, r)
+		}
+	}
+
+	summary.TotalEstimatedNew = summary.TotalCurrentSize - summary.TotalSavings
+	if summary.TotalCurrentSize > 0 {
+		summary.SavingsPercent = float64(summary.TotalSavings) / float64(summary.TotalCurrentSize) * 100
+	}
+
+	return summary
 }
