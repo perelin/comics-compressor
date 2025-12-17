@@ -16,3 +16,10 @@ threshold_mb_per_page: 3
 
 # Directory to store original files before compression
 backup_dir: "originals_backup"
+
+# Filename patterns to skip (uses filepath.Match glob syntax)
+# Default patterns skip macOS resource forks and metadata files
+skip_patterns:
+  - "._*"        # macOS resource forks
+  - ".DS_Store"  # macOS folder metadata
+  - "__MACOSX"   # macOS archive artifacts

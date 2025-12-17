@@ -246,6 +246,16 @@ func (p *Pipeline) verifyCompressedCBZ(path string) error {
 	return nil
 }
 
+// shouldSkipFile checks if a filename matches any of the skip patterns
+func (p *Pipeline) shouldSkipFile(filename string) bool {
+	for _, pattern := range p.config.SkipPatterns {
+		if matched, _ := filepath.Match(pattern, filename); matched {
+			return true
+		}
+	}
+	return false
+}
+
 // ProcessDirectory processes all CBZ files in a directory
 func (p *Pipeline) ProcessDirectory(dirPath string) (*BatchResult, error) {
 	// Find all CBZ files
@@ -265,6 +275,11 @@ func (p *Pipeline) ProcessDirectory(dirPath string) (*BatchResult, error) {
 			if absPath == backupDirAbs {
 				return filepath.SkipDir
 			}
+		}
+
+		// Skip files matching skip patterns (e.g., macOS resource forks)
+		if !info.IsDir() && p.shouldSkipFile(info.Name()) {
+			return nil
 		}
 
 		if !info.IsDir() && strings.ToLower(filepath.Ext(path)) == ".cbz" {

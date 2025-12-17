@@ -17,10 +17,11 @@ var embeddedDefaults *Config
 // Config holds all settings for compression
 type Config struct {
 	// Configurable via YAML file
-	MaxDimension    int     `yaml:"max_dimension"`         // Maximum dimension in pixels
-	JPEGQuality     int     `yaml:"jpeg_quality"`          // JPEG quality 1-100
-	BackupDir       string  `yaml:"backup_dir"`            // Where to move originals
-	ThresholdMBPage float64 `yaml:"threshold_mb_per_page"` // MB per page threshold for skip heuristic
+	MaxDimension    int      `yaml:"max_dimension"`         // Maximum dimension in pixels
+	JPEGQuality     int      `yaml:"jpeg_quality"`          // JPEG quality 1-100
+	BackupDir       string   `yaml:"backup_dir"`            // Where to move originals
+	ThresholdMBPage float64  `yaml:"threshold_mb_per_page"` // MB per page threshold for skip heuristic
+	SkipPatterns    []string `yaml:"skip_patterns"`         // Filename patterns to skip (e.g., "._*")
 
 	// Runtime flags (not in YAML)
 	Recursive bool // Process directories recursively
@@ -29,6 +30,9 @@ type Config struct {
 	Verbose   bool // Detailed output
 	Workers   int  // Concurrent processing
 }
+
+// DefaultSkipPatterns contains common patterns to skip (macOS resource forks, etc.)
+var DefaultSkipPatterns = []string{"._*", ".DS_Store", "__MACOSX"}
 
 // InitEmbedded initializes the embedded defaults from build-time YAML data.
 // This must be called before any other config functions.
@@ -39,6 +43,7 @@ func InitEmbedded(data []byte) error {
 		JPEGQuality:     90,
 		BackupDir:       "originals_backup",
 		ThresholdMBPage: 1.5,
+		SkipPatterns:    DefaultSkipPatterns,
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
@@ -65,12 +70,14 @@ func DefaultConfig() Config {
 		cfg.JPEGQuality = embeddedDefaults.JPEGQuality
 		cfg.BackupDir = embeddedDefaults.BackupDir
 		cfg.ThresholdMBPage = embeddedDefaults.ThresholdMBPage
+		cfg.SkipPatterns = embeddedDefaults.SkipPatterns
 	} else {
 		// Hardcoded fallbacks
 		cfg.MaxDimension = 1800
 		cfg.JPEGQuality = 90
 		cfg.BackupDir = "originals_backup"
 		cfg.ThresholdMBPage = 1.5
+		cfg.SkipPatterns = DefaultSkipPatterns
 	}
 
 	return cfg
@@ -108,11 +115,16 @@ func LoadWithDefaults() (*Config, error) {
 
 // String returns a formatted string representation of the config
 func (c Config) String() string {
+	skipPatternsStr := "[]"
+	if len(c.SkipPatterns) > 0 {
+		skipPatternsStr = fmt.Sprintf("%v", c.SkipPatterns)
+	}
 	return fmt.Sprintf(`Config:
   MaxDimension:    %d px
   JPEGQuality:     %d
   BackupDir:       %s
   ThresholdMBPage: %.2f MB
+  SkipPatterns:    %s
   Recursive:       %t
   Force:           %t
   DryRun:          %t
@@ -122,6 +134,7 @@ func (c Config) String() string {
 		c.JPEGQuality,
 		c.BackupDir,
 		c.ThresholdMBPage,
+		skipPatternsStr,
 		c.Recursive,
 		c.Force,
 		c.DryRun,
