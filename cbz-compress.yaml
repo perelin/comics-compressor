@@ -4,7 +4,8 @@
 
 # Maximum dimension in pixels (width or height)
 # Images larger than this will be resized proportionally
-max_dimension: 2600
+# 4098: ipad max resolution
+max_dimension: 4098
 
 # JPEG quality (1-100)
 # Higher values = better quality, larger files
@@ -20,6 +21,6 @@ backup_dir: "originals_backup"
 # Filename patterns to skip (uses filepath.Match glob syntax)
 # Default patterns skip macOS resource forks and metadata files
 skip_patterns:
-  - "._*"        # macOS resource forks
-  - ".DS_Store"  # macOS folder metadata
-  - "__MACOSX"   # macOS archive artifacts
+  - "._*" # macOS resource forks
+  - ".DS_Store" # macOS folder metadata
+  - "__MACOSX" # macOS archive artifacts
