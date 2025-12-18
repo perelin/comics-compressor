@@ -124,6 +124,7 @@ func main() {
 		JPEGQuality:     quality,
 		BackupDir:       backupDir,
 		ThresholdMBPage: threshold,
+		SkipPatterns:    baseCfg.SkipPatterns,
 		Recursive:       recursive,
 		Force:           force,
 		DryRun:          dryRun,
