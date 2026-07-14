@@ -18,6 +18,7 @@ type ProcessedImage struct {
 	Data         []byte
 	WasResized   bool
 	WasConverted bool
+	WasReencoded bool // Output bytes differ from input (decode + re-encode happened)
 	OriginalSize int64
 	NewSize      int64
 }
@@ -111,6 +112,7 @@ func (p *ImageProcessor) Process(entry cbz.ImageEntry) (*ProcessedImage, error) 
 
 	result.Data = newData
 	result.NewSize = newSize
+	result.WasReencoded = true
 
 	return result, nil
 }

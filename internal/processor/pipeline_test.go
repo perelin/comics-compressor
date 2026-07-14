@@ -31,6 +31,10 @@ func testConfig(t *testing.T, dir string) config.Config {
 
 // makeJPEG encodes a gradient image (compressible, non-trivial) as JPEG.
 func makeJPEG(t *testing.T, w, h int) []byte {
+	return makeJPEGQuality(t, w, h, 90)
+}
+
+func makeJPEGQuality(t *testing.T, w, h, quality int) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := range h {
@@ -39,7 +43,7 @@ func makeJPEG(t *testing.T, w, h int) []byte {
 		}
 	}
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
 		t.Fatalf("encode jpeg: %v", err)
 	}
 	return buf.Bytes()
@@ -220,14 +224,17 @@ func TestSavingsGuardKeepsOriginal(t *testing.T) {
 }
 
 // TestThresholdTriggersFullReencode verifies that the MB/page trigger still
-// re-encodes every page (no pass-through).
+// re-encodes every page (no pass-through) and that the file is replaced.
+// q100 source pages guarantee that the q90 re-encode is genuinely smaller.
 func TestThresholdTriggersFullReencode(t *testing.T) {
 	dir := t.TempDir()
 	cbzPath := filepath.Join(dir, "comic.cbz")
 
+	p1 := makeJPEGQuality(t, 150, 150, 100)
+	p2 := makeJPEGQuality(t, 150, 150, 100)
 	writeCBZ(t, cbzPath, []page{
-		{"page1.jpg", makeJPEG(t, 150, 150)},
-		{"page2.jpg", makeJPEG(t, 150, 150)},
+		{"page1.jpg", p1},
+		{"page2.jpg", p2},
 	})
 
 	cfg := testConfig(t, dir)
@@ -239,6 +246,46 @@ func TestThresholdTriggersFullReencode(t *testing.T) {
 	}
 	if result.ImagesPassedThrough != 0 {
 		t.Errorf("ImagesPassedThrough = %d, want 0 when threshold trigger fires", result.ImagesPassedThrough)
+	}
+	if result.Skipped || result.KeptOriginal {
+		t.Fatalf("file was not replaced: %s", result.SkipReason)
+	}
+	if result.ImagesProcessed != 2 {
+		t.Errorf("ImagesProcessed = %d, want 2 (re-encoded pages count as modified)", result.ImagesProcessed)
+	}
+
+	out := readCBZ(t, cbzPath)
+	if bytes.Equal(out["page1.jpg"], p1) || bytes.Equal(out["page2.jpg"], p2) {
+		t.Error("pages were not re-encoded despite threshold trigger")
+	}
+}
+
+// TestForceBypassesSavingsGuard verifies that -force replaces the file even
+// when the savings guard would keep it.
+func TestForceBypassesSavingsGuard(t *testing.T) {
+	dir := t.TempDir()
+	cbzPath := filepath.Join(dir, "comic.cbz")
+
+	// q90 pages re-encoded at q90 yield ~zero savings: without force the
+	// guard would keep the original (see TestSavingsGuardKeepsOriginal).
+	writeCBZ(t, cbzPath, []page{
+		{"page1.jpg", makeJPEG(t, 150, 150)},
+		{"page2.jpg", makeJPEG(t, 150, 150)},
+	})
+
+	cfg := testConfig(t, dir)
+	cfg.MinSavingsPct = 5
+	cfg.Force = true
+	p := NewPipeline(cfg, nil)
+	result, err := p.ProcessFile(cbzPath)
+	if err != nil {
+		t.Fatalf("ProcessFile: %v", err)
+	}
+	if result.Skipped || result.KeptOriginal {
+		t.Errorf("force run was kept/skipped: %s", result.SkipReason)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.BackupDir, "comic.cbz")); err != nil {
+		t.Errorf("original not found in backup after force replacement: %v", err)
 	}
 }
 

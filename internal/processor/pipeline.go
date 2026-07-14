@@ -191,7 +191,9 @@ func (p *Pipeline) ProcessFile(cbzPath string) (*Result, error) {
 			Data: processed.Data,
 		})
 
-		if processed.WasResized || processed.WasConverted {
+		// "Modified" includes plain re-encodes (threshold/force path); only
+		// pages whose original bytes were kept count as untouched.
+		if processed.WasResized || processed.WasConverted || processed.WasReencoded {
 			result.ImagesProcessed++
 		} else {
 			result.ImagesSkipped++
@@ -229,8 +231,11 @@ func (p *Pipeline) ProcessFile(cbzPath string) (*Result, error) {
 
 	// Savings guard: replacing the original always risks quality, so it must
 	// buy a meaningful size reduction. Otherwise keep the original untouched.
-	if !shouldReplace(result.OriginalSize, result.CompressedSize, p.config.MinSavingsPct) {
-		os.Remove(tempOutput)
+	// Force mode is an explicit request to re-encode, so it bypasses the guard.
+	if !p.config.Force && !shouldReplace(result.OriginalSize, result.CompressedSize, p.config.MinSavingsPct) {
+		if rmErr := os.Remove(tempOutput); rmErr != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("failed to remove temp file: %w", rmErr))
+		}
 		savings := float64(result.OriginalSize-result.CompressedSize) / float64(result.OriginalSize) * 100
 		result.Skipped = true
 		result.KeptOriginal = true
