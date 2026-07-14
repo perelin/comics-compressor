@@ -21,6 +21,7 @@ type Config struct {
 	JPEGQuality     int      `yaml:"jpeg_quality"`          // JPEG quality 1-100
 	BackupDir       string   `yaml:"backup_dir"`            // Where to move originals
 	ThresholdMBPage float64  `yaml:"threshold_mb_per_page"` // MB per page threshold for skip heuristic
+	MinSavingsPct   float64  `yaml:"min_savings_pct"`       // Minimum savings percent required to replace the original
 	SkipPatterns    []string `yaml:"skip_patterns"`         // Filename patterns to skip (e.g., "._*")
 
 	// Runtime flags (not in YAML)
@@ -43,6 +44,7 @@ func InitEmbedded(data []byte) error {
 		JPEGQuality:     90,
 		BackupDir:       "originals_backup",
 		ThresholdMBPage: 1.5,
+		MinSavingsPct:   5,
 		SkipPatterns:    DefaultSkipPatterns,
 	}
 
@@ -70,6 +72,7 @@ func DefaultConfig() Config {
 		cfg.JPEGQuality = embeddedDefaults.JPEGQuality
 		cfg.BackupDir = embeddedDefaults.BackupDir
 		cfg.ThresholdMBPage = embeddedDefaults.ThresholdMBPage
+		cfg.MinSavingsPct = embeddedDefaults.MinSavingsPct
 		cfg.SkipPatterns = embeddedDefaults.SkipPatterns
 	} else {
 		// Hardcoded fallbacks
@@ -77,6 +80,7 @@ func DefaultConfig() Config {
 		cfg.JPEGQuality = 90
 		cfg.BackupDir = "originals_backup"
 		cfg.ThresholdMBPage = 1.5
+		cfg.MinSavingsPct = 5
 		cfg.SkipPatterns = DefaultSkipPatterns
 	}
 
@@ -124,6 +128,7 @@ func (c Config) String() string {
   JPEGQuality:     %d
   BackupDir:       %s
   ThresholdMBPage: %.2f MB
+  MinSavingsPct:   %.1f %%
   SkipPatterns:    %s
   Recursive:       %t
   Force:           %t
@@ -134,6 +139,7 @@ func (c Config) String() string {
 		c.JPEGQuality,
 		c.BackupDir,
 		c.ThresholdMBPage,
+		c.MinSavingsPct,
 		skipPatternsStr,
 		c.Recursive,
 		c.Force,

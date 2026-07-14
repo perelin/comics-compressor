@@ -38,6 +38,7 @@ func main() {
 		maxDim      int
 		quality     int
 		threshold   float64
+		minSavings  float64
 		recursive   bool
 		force       bool
 		dryRun      bool
@@ -58,6 +59,8 @@ func main() {
 
 	flag.Float64Var(&threshold, "threshold", baseCfg.ThresholdMBPage, "MB per page threshold for skip heuristic")
 	flag.Float64Var(&threshold, "t", baseCfg.ThresholdMBPage, "MB per page threshold (shorthand)")
+
+	flag.Float64Var(&minSavings, "min-savings", baseCfg.MinSavingsPct, "Minimum savings percent required to replace a file (0-100)")
 
 	flag.BoolVar(&recursive, "recursive", true, "Process directories recursively")
 	flag.BoolVar(&recursive, "r", true, "Recursive (shorthand)")
@@ -118,12 +121,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Validate min savings
+	if minSavings < 0 || minSavings > 100 {
+		fmt.Fprintln(os.Stderr, "Error: min-savings must be between 0 and 100")
+		os.Exit(1)
+	}
+
 	// Build config
 	cfg := config.Config{
 		MaxDimension:    maxDim,
 		JPEGQuality:     quality,
 		BackupDir:       backupDir,
 		ThresholdMBPage: threshold,
+		MinSavingsPct:   minSavings,
 		SkipPatterns:    baseCfg.SkipPatterns,
 		Recursive:       recursive,
 		Force:           force,

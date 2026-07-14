@@ -15,6 +15,10 @@ jpeg_quality: 90
 # Files with average page size below this are considered already optimized
 threshold_mb_per_page: 3
 
+# Minimum savings (percent of original size) required to replace a file.
+# If processing saves less than this, the original is kept untouched.
+min_savings_pct: 5
+
 # Directory to store original files before compression
 backup_dir: "originals_backup"
 
