@@ -28,16 +28,17 @@ var supportedImageExtensions = map[string]bool{
 
 // AnalysisResult contains the quick scan results for a CBZ file
 type AnalysisResult struct {
-	FilePath        string
-	FileSize        int64   // Total file size in bytes
-	PageCount       int     // Number of images (pages)
-	MaxWidth        int     // Maximum image width found
-	MaxHeight       int     // Maximum image height found
-	MBPerPage       float64 // Megabytes per page
-	HasOversized    bool    // Any image exceeds max dimension
-	HasNonJPEG      bool    // Any image is not JPEG (PNG, GIF, etc.)
-	NeedsProcessing bool    // Final verdict: should this file be processed?
-	SkipReason      string  // Why it's being skipped (if NeedsProcessing is false)
+	FilePath         string
+	FileSize         int64   // Total file size in bytes
+	PageCount        int     // Number of images (pages)
+	MaxWidth         int     // Maximum image width found
+	MaxHeight        int     // Maximum image height found
+	MBPerPage        float64 // Megabytes per page
+	HasOversized     bool    // Any image exceeds max dimension
+	HasNonJPEG       bool    // Any image is not JPEG (PNG, GIF, etc.)
+	ExceedsThreshold bool    // MB/page exceeds threshold (triggers full re-encode)
+	NeedsProcessing  bool    // Final verdict: should this file be processed?
+	SkipReason       string  // Why it's being skipped (if NeedsProcessing is false)
 
 	// Estimation fields (for dry-run report)
 	EstimatedSavingsBytes int64    // Projected bytes saved
@@ -139,6 +140,7 @@ func (a *Analyzer) Analyze(cbzPath string) (*AnalysisResult, error) {
 	if result.PageCount > 0 {
 		result.MBPerPage = float64(result.FileSize) / float64(result.PageCount) / (1024 * 1024)
 	}
+	result.ExceedsThreshold = result.MBPerPage > a.thresholdMBPage
 
 	// Determine if processing is needed
 	result.NeedsProcessing = a.shouldProcess(result)
@@ -159,7 +161,7 @@ func (a *Analyzer) shouldProcess(result *AnalysisResult) bool {
 	}
 
 	// Process if exceeds MB/page threshold
-	if result.MBPerPage > a.thresholdMBPage {
+	if result.ExceedsThreshold {
 		return true
 	}
 
@@ -185,7 +187,7 @@ func (a *Analyzer) FormatAnalysis(result *AnalysisResult) string {
 		if result.HasNonJPEG {
 			reasons = append(reasons, "non-JPEG images")
 		}
-		if result.MBPerPage > a.thresholdMBPage {
+		if result.ExceedsThreshold {
 			reasons = append(reasons, fmt.Sprintf("%.2f MB/page > %.2f threshold", result.MBPerPage, a.thresholdMBPage))
 		}
 		if len(reasons) > 0 {
@@ -226,7 +228,7 @@ func (a *Analyzer) EstimateSavings(result *AnalysisResult) {
 	}
 
 	// High MB/page re-encoding (only if no other triggers)
-	if result.MBPerPage > a.thresholdMBPage && !result.HasOversized && !result.HasNonJPEG {
+	if result.ExceedsThreshold && !result.HasOversized && !result.HasNonJPEG {
 		estimatedFinalSize *= 0.75
 		reasons = append(reasons, fmt.Sprintf("high quality (%.1f MB/page)", result.MBPerPage))
 	}
