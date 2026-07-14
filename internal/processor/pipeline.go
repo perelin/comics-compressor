@@ -1,7 +1,9 @@
 package processor
 
 import (
+	"bytes"
 	"fmt"
+	"image"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,20 +19,22 @@ import (
 
 // Result tracks the outcome of processing a single CBZ
 type Result struct {
-	SourcePath      string
-	OutputPath      string
-	OriginalSize    int64
-	CompressedSize  int64
-	ImagesProcessed int
-	ImagesSkipped   int
-	PNGsConverted   int
-	Skipped         bool
-	SkipReason      string
-	Errors          []error
-	Duration        time.Duration
-	Analysis        *analyzer.AnalysisResult // For dry-run reporting
-	Index           int                      // Progress: current file index (1-based)
-	Total           int                      // Progress: total files in batch
+	SourcePath          string
+	OutputPath          string
+	OriginalSize        int64
+	CompressedSize      int64
+	ImagesProcessed     int
+	ImagesSkipped       int
+	ImagesPassedThrough int // Pages copied byte-identical without decode/re-encode
+	PNGsConverted       int
+	Skipped             bool
+	KeptOriginal        bool // Processed, but replacement rejected by the savings guard
+	SkipReason          string
+	Errors              []error
+	Duration            time.Duration
+	Analysis            *analyzer.AnalysisResult // For dry-run reporting
+	Index               int                      // Progress: current file index (1-based)
+	Total               int                      // Progress: total files in batch
 }
 
 // BatchResult aggregates results for multiple files
@@ -151,10 +155,25 @@ func (p *Pipeline) ProcessFile(cbzPath string) (*Result, error) {
 		return nil, err
 	}
 
+	// Re-encode every page only when the file-level trigger demands it: force
+	// mode, or the MB/page threshold fired. Otherwise only pages that
+	// individually need work (resize, format conversion) are touched; all
+	// other pages are passed through byte-identical to avoid generation loss.
+	reencodeAll := p.config.Force || (analysis != nil && analysis.ExceedsThreshold)
+
 	// Process images
 	entries := make([]cbz.WriteEntry, 0, len(contents.Images)+len(contents.OtherFiles))
 
 	for _, img := range contents.Images {
+		if !reencodeAll && !p.pageNeedsWork(img) {
+			entries = append(entries, cbz.WriteEntry{
+				Path: img.Path,
+				Data: img.Data,
+			})
+			result.ImagesPassedThrough++
+			continue
+		}
+
 		processed, err := p.processor.Process(img)
 		if err != nil {
 			// Log error but continue with other images
@@ -208,6 +227,18 @@ func (p *Pipeline) ProcessFile(cbzPath string) (*Result, error) {
 	}
 	result.CompressedSize = compressedInfo.Size()
 
+	// Savings guard: replacing the original always risks quality, so it must
+	// buy a meaningful size reduction. Otherwise keep the original untouched.
+	if !shouldReplace(result.OriginalSize, result.CompressedSize, p.config.MinSavingsPct) {
+		os.Remove(tempOutput)
+		savings := float64(result.OriginalSize-result.CompressedSize) / float64(result.OriginalSize) * 100
+		result.Skipped = true
+		result.KeptOriginal = true
+		result.SkipReason = fmt.Sprintf("no meaningful savings (%.1f%% < %.1f%%)", savings, p.config.MinSavingsPct)
+		result.Duration = time.Since(startTime)
+		return result, nil
+	}
+
 	// Verify the new CBZ is valid before proceeding
 	if err := p.verifyCompressedCBZ(tempOutput); err != nil {
 		os.Remove(tempOutput)
@@ -234,6 +265,27 @@ func (p *Pipeline) ProcessFile(cbzPath string) (*Result, error) {
 	result.Duration = time.Since(startTime)
 
 	return result, nil
+}
+
+// pageNeedsWork reports whether a single page needs processing: non-JPEG
+// format or dimensions exceeding the maximum. Pages whose header cannot be
+// decoded are passed through untouched.
+func (p *Pipeline) pageNeedsWork(img cbz.ImageEntry) bool {
+	ext := strings.ToLower(filepath.Ext(img.Path))
+	if ext != ".jpg" && ext != ".jpeg" {
+		return true
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(img.Data))
+	if err != nil {
+		return false
+	}
+	return p.processor.ShouldProcess(img, cfg.Width, cfg.Height)
+}
+
+// shouldReplace reports whether the compressed result is enough smaller than
+// the original to justify replacing it (at least minSavingsPct percent).
+func shouldReplace(originalSize, compressedSize int64, minSavingsPct float64) bool {
+	return float64(compressedSize) <= float64(originalSize)*(1.0-minSavingsPct/100.0)
 }
 
 // verifyCompressedCBZ checks that the new CBZ is valid
@@ -554,6 +606,13 @@ func (r *ConsoleReporter) OnFileComplete(result Result) {
 		return
 	}
 
+	// Handle files kept after processing (savings guard, non-dry-run)
+	if result.KeptOriginal {
+		fmt.Fprintf(r.writer, "%s %-42s  [KEPT] %s\n",
+			progress, truncateString(fileName, 42), result.SkipReason)
+		return
+	}
+
 	// Handle skipped files (non-dry-run)
 	if result.Skipped {
 		fmt.Fprintf(r.writer, "%s %-42s  [SKIP] %s\n",
@@ -571,13 +630,14 @@ func (r *ConsoleReporter) OnFileComplete(result Result) {
 	// Handle processed files (non-dry-run)
 	if result.OriginalSize > 0 && result.CompressedSize > 0 {
 		savings := float64(result.OriginalSize-result.CompressedSize) / float64(result.OriginalSize) * 100
-		fmt.Fprintf(r.writer, "%s %-42s %10s -> %10s  (%.1f%% saved, %d images, %v)\n",
+		fmt.Fprintf(r.writer, "%s %-42s %10s -> %10s  (%.1f%% saved, %d modified, %d untouched, %v)\n",
 			progress,
 			truncateString(fileName, 42),
 			formatBytes(result.OriginalSize),
 			formatBytes(result.CompressedSize),
 			savings,
 			result.ImagesProcessed,
+			result.ImagesPassedThrough+result.ImagesSkipped,
 			result.Duration.Round(time.Millisecond))
 	}
 }
