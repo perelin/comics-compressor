@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"runtime"
 
@@ -21,6 +22,7 @@ type Config struct {
 	JPEGQuality     int      `yaml:"jpeg_quality"`          // JPEG quality 1-100
 	BackupDir       string   `yaml:"backup_dir"`            // Where to move originals
 	ThresholdMBPage float64  `yaml:"threshold_mb_per_page"` // MB per page threshold for skip heuristic
+	MinSavingsPct   float64  `yaml:"min_savings_pct"`       // Minimum savings percent required to replace the original
 	SkipPatterns    []string `yaml:"skip_patterns"`         // Filename patterns to skip (e.g., "._*")
 
 	// Runtime flags (not in YAML)
@@ -43,6 +45,7 @@ func InitEmbedded(data []byte) error {
 		JPEGQuality:     90,
 		BackupDir:       "originals_backup",
 		ThresholdMBPage: 1.5,
+		MinSavingsPct:   5,
 		SkipPatterns:    DefaultSkipPatterns,
 	}
 
@@ -70,6 +73,7 @@ func DefaultConfig() Config {
 		cfg.JPEGQuality = embeddedDefaults.JPEGQuality
 		cfg.BackupDir = embeddedDefaults.BackupDir
 		cfg.ThresholdMBPage = embeddedDefaults.ThresholdMBPage
+		cfg.MinSavingsPct = embeddedDefaults.MinSavingsPct
 		cfg.SkipPatterns = embeddedDefaults.SkipPatterns
 	} else {
 		// Hardcoded fallbacks
@@ -77,6 +81,7 @@ func DefaultConfig() Config {
 		cfg.JPEGQuality = 90
 		cfg.BackupDir = "originals_backup"
 		cfg.ThresholdMBPage = 1.5
+		cfg.MinSavingsPct = 5
 		cfg.SkipPatterns = DefaultSkipPatterns
 	}
 
@@ -113,6 +118,28 @@ func LoadWithDefaults() (*Config, error) {
 	return cfg, nil
 }
 
+// Validate checks that all config values are usable, regardless of whether
+// they came from YAML or CLI flags. NaN/Inf are rejected explicitly because
+// they slip through plain range comparisons.
+func (c Config) Validate() error {
+	if c.MaxDimension < 1 {
+		return fmt.Errorf("max_dimension must be positive (got %d)", c.MaxDimension)
+	}
+	if c.JPEGQuality < 1 || c.JPEGQuality > 100 {
+		return fmt.Errorf("jpeg_quality must be between 1 and 100 (got %d)", c.JPEGQuality)
+	}
+	if math.IsNaN(c.ThresholdMBPage) || math.IsInf(c.ThresholdMBPage, 0) || c.ThresholdMBPage < 0 {
+		return fmt.Errorf("threshold_mb_per_page must be a non-negative number (got %v)", c.ThresholdMBPage)
+	}
+	if math.IsNaN(c.MinSavingsPct) || math.IsInf(c.MinSavingsPct, 0) || c.MinSavingsPct < 0 || c.MinSavingsPct > 100 {
+		return fmt.Errorf("min_savings_pct must be between 0 and 100 (got %v)", c.MinSavingsPct)
+	}
+	if c.Workers < 1 {
+		return fmt.Errorf("workers must be at least 1 (got %d)", c.Workers)
+	}
+	return nil
+}
+
 // String returns a formatted string representation of the config
 func (c Config) String() string {
 	skipPatternsStr := "[]"
@@ -124,6 +151,7 @@ func (c Config) String() string {
   JPEGQuality:     %d
   BackupDir:       %s
   ThresholdMBPage: %.2f MB
+  MinSavingsPct:   %.1f %%
   SkipPatterns:    %s
   Recursive:       %t
   Force:           %t
@@ -134,6 +162,7 @@ func (c Config) String() string {
 		c.JPEGQuality,
 		c.BackupDir,
 		c.ThresholdMBPage,
+		c.MinSavingsPct,
 		skipPatternsStr,
 		c.Recursive,
 		c.Force,

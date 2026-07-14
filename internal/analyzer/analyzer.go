@@ -28,21 +28,27 @@ var supportedImageExtensions = map[string]bool{
 
 // AnalysisResult contains the quick scan results for a CBZ file
 type AnalysisResult struct {
-	FilePath        string
-	FileSize        int64   // Total file size in bytes
-	PageCount       int     // Number of images (pages)
-	MaxWidth        int     // Maximum image width found
-	MaxHeight       int     // Maximum image height found
-	MBPerPage       float64 // Megabytes per page
-	HasOversized    bool    // Any image exceeds max dimension
-	HasNonJPEG      bool    // Any image is not JPEG (PNG, GIF, etc.)
-	NeedsProcessing bool    // Final verdict: should this file be processed?
-	SkipReason      string  // Why it's being skipped (if NeedsProcessing is false)
+	FilePath         string
+	FileSize         int64   // Total file size in bytes
+	PageCount        int     // Number of images (pages)
+	MaxWidth         int     // Maximum image width found
+	MaxHeight        int     // Maximum image height found
+	MBPerPage        float64 // Megabytes per page
+	HasOversized     bool    // Any image exceeds max dimension
+	HasNonJPEG       bool    // Any image is not JPEG (PNG, GIF, etc.)
+	ExceedsThreshold bool    // MB/page exceeds threshold (triggers full re-encode)
+	NeedsProcessing  bool    // Final verdict: should this file be processed?
+	SkipReason       string  // Why it's being skipped (if NeedsProcessing is false)
 
 	// Estimation fields (for dry-run report)
 	EstimatedSavingsBytes int64    // Projected bytes saved
 	EstimatedSavingsPct   float64  // Projected percentage (0-100)
 	ProcessingReasons     []string // Human-readable reasons for processing
+
+	// pageSavingsBytes accumulates per-page savings estimates during the scan.
+	// Under per-page gating only pages that individually need work shrink, so
+	// estimates must be based on those pages' archived sizes, not the whole file.
+	pageSavingsBytes int64
 }
 
 // Analyzer performs quick scans of CBZ files to determine if they need processing
@@ -129,9 +135,18 @@ func (a *Analyzer) Analyze(cbzPath string) (*AnalysisResult, error) {
 			result.MaxHeight = cfg.Height
 		}
 
-		// Check if oversized
+		// Check if oversized, and accumulate this page's savings estimate
+		// based on its archived size (used by the dry-run report)
+		pageBytes := int64(file.CompressedSize64)
 		if cfg.Width > a.maxDimension || cfg.Height > a.maxDimension {
 			result.HasOversized = true
+			scale := float64(a.maxDimension) / float64(max(cfg.Width, cfg.Height))
+			// Area reduction with 20% margin for JPEG overhead
+			shrink := 1.0 - min(1.0, scale*scale*1.2)
+			result.pageSavingsBytes += int64(float64(pageBytes) * shrink)
+		} else if ext != ".jpg" && ext != ".jpeg" {
+			// Format conversion PNG/GIF to JPEG typically saves ~35%
+			result.pageSavingsBytes += int64(float64(pageBytes) * 0.35)
 		}
 	}
 
@@ -139,6 +154,7 @@ func (a *Analyzer) Analyze(cbzPath string) (*AnalysisResult, error) {
 	if result.PageCount > 0 {
 		result.MBPerPage = float64(result.FileSize) / float64(result.PageCount) / (1024 * 1024)
 	}
+	result.ExceedsThreshold = result.MBPerPage > a.thresholdMBPage
 
 	// Determine if processing is needed
 	result.NeedsProcessing = a.shouldProcess(result)
@@ -159,7 +175,7 @@ func (a *Analyzer) shouldProcess(result *AnalysisResult) bool {
 	}
 
 	// Process if exceeds MB/page threshold
-	if result.MBPerPage > a.thresholdMBPage {
+	if result.ExceedsThreshold {
 		return true
 	}
 
@@ -185,7 +201,7 @@ func (a *Analyzer) FormatAnalysis(result *AnalysisResult) string {
 		if result.HasNonJPEG {
 			reasons = append(reasons, "non-JPEG images")
 		}
-		if result.MBPerPage > a.thresholdMBPage {
+		if result.ExceedsThreshold {
 			reasons = append(reasons, fmt.Sprintf("%.2f MB/page > %.2f threshold", result.MBPerPage, a.thresholdMBPage))
 		}
 		if len(reasons) > 0 {
@@ -205,36 +221,25 @@ func (a *Analyzer) EstimateSavings(result *AnalysisResult) {
 	}
 
 	currentSize := float64(result.FileSize)
-	estimatedFinalSize := currentSize
 	reasons := []string{}
 
-	// Resize estimation: area reduction squared with margin
+	// Per-page gating means only pages that individually need work shrink, so
+	// the estimate is the sum of per-page estimates gathered during the scan.
+	// When the MB/page threshold fired, every page is re-encoded instead, so
+	// a whole-file estimate applies (whichever is larger).
+	savings := float64(result.pageSavingsBytes)
+	if result.ExceedsThreshold {
+		savings = max(savings, currentSize*0.25)
+		reasons = append(reasons, fmt.Sprintf("high quality (%.1f MB/page)", result.MBPerPage))
+	}
 	if result.HasOversized {
-		maxDim := float64(max(result.MaxWidth, result.MaxHeight))
-		scaleFactor := float64(a.maxDimension) / maxDim
-		if scaleFactor < 1.0 {
-			areaRatio := scaleFactor * scaleFactor
-			estimatedFinalSize *= areaRatio * 1.2 // 20% margin for JPEG overhead
-		}
 		reasons = append(reasons, fmt.Sprintf("oversized (%dx%d)", result.MaxWidth, result.MaxHeight))
 	}
-
-	// Format conversion estimation: PNG/GIF to JPEG typically saves ~35%
 	if result.HasNonJPEG {
-		estimatedFinalSize *= 0.65
 		reasons = append(reasons, "non-JPEG conversion")
 	}
 
-	// High MB/page re-encoding (only if no other triggers)
-	if result.MBPerPage > a.thresholdMBPage && !result.HasOversized && !result.HasNonJPEG {
-		estimatedFinalSize *= 0.75
-		reasons = append(reasons, fmt.Sprintf("high quality (%.1f MB/page)", result.MBPerPage))
-	}
-
-	savings := currentSize - estimatedFinalSize
-	if savings < 0 {
-		savings = 0
-	}
+	savings = min(max(savings, 0), currentSize)
 
 	result.EstimatedSavingsBytes = int64(savings)
 	if currentSize > 0 {

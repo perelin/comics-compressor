@@ -51,13 +51,16 @@ internal/
 
 2. **Processing** (`processor/`):
    - Extract all images from CBZ
+   - Per-page gating: pages that don't individually need work (oversized or non-JPEG) are copied byte-identical; only when the MB/page threshold fired or `-force` is set is every page re-encoded
    - Resize images exceeding max dimension using Lanczos filter
    - Convert PNG/GIF/WebP to JPEG
    - Adaptive quality reduction if output is larger than input
 
 3. **Atomic Writes** (`cbz/writer.go`): Creates temp file, writes compressed CBZ, then atomically renames to final path.
 
-4. **Backup Safety** (`backup/`): Original files are moved to backup directory before replacement. Restore is attempted on failure.
+4. **Savings Guard**: The original is only replaced if the compressed result is at least `min_savings_pct` percent smaller (default 5). Otherwise the original is kept untouched and reported as `[KEPT]`. `-force` bypasses the guard (explicit re-encode request always replaces).
+
+5. **Backup Safety** (`backup/`): Original files are moved to backup directory before replacement. Restore is attempted on failure.
 
 ### Important Design Decisions
 
@@ -77,6 +80,7 @@ The `cbz-compress.yaml` file controls default values. It is **embedded at build 
 max_dimension: 1800
 jpeg_quality: 90
 threshold_mb_per_page: 1.5
+min_savings_pct: 5
 backup_dir: "originals_backup"
 ```
 
