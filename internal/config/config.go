@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"runtime"
 
@@ -115,6 +116,28 @@ func LoadWithDefaults() (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// Validate checks that all config values are usable, regardless of whether
+// they came from YAML or CLI flags. NaN/Inf are rejected explicitly because
+// they slip through plain range comparisons.
+func (c Config) Validate() error {
+	if c.MaxDimension < 1 {
+		return fmt.Errorf("max_dimension must be positive (got %d)", c.MaxDimension)
+	}
+	if c.JPEGQuality < 1 || c.JPEGQuality > 100 {
+		return fmt.Errorf("jpeg_quality must be between 1 and 100 (got %d)", c.JPEGQuality)
+	}
+	if math.IsNaN(c.ThresholdMBPage) || math.IsInf(c.ThresholdMBPage, 0) || c.ThresholdMBPage < 0 {
+		return fmt.Errorf("threshold_mb_per_page must be a non-negative number (got %v)", c.ThresholdMBPage)
+	}
+	if math.IsNaN(c.MinSavingsPct) || math.IsInf(c.MinSavingsPct, 0) || c.MinSavingsPct < 0 || c.MinSavingsPct > 100 {
+		return fmt.Errorf("min_savings_pct must be between 0 and 100 (got %v)", c.MinSavingsPct)
+	}
+	if c.Workers < 1 {
+		return fmt.Errorf("workers must be at least 1 (got %d)", c.Workers)
+	}
+	return nil
 }
 
 // String returns a formatted string representation of the config

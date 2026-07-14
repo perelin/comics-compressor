@@ -109,24 +109,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Validate quality
-	if quality < 1 || quality > 100 {
-		fmt.Fprintln(os.Stderr, "Error: quality must be between 1 and 100")
-		os.Exit(1)
-	}
-
-	// Validate workers
-	if workers < 1 {
-		fmt.Fprintln(os.Stderr, "Error: workers must be at least 1")
-		os.Exit(1)
-	}
-
-	// Validate min savings
-	if minSavings < 0 || minSavings > 100 {
-		fmt.Fprintln(os.Stderr, "Error: min-savings must be between 0 and 100")
-		os.Exit(1)
-	}
-
 	// Build config
 	cfg := config.Config{
 		MaxDimension:    maxDim,
@@ -140,6 +122,12 @@ func main() {
 		DryRun:          dryRun,
 		Verbose:         verbose,
 		Workers:         workers,
+	}
+
+	// Validate the merged config (embedded defaults, YAML file, CLI flags)
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid configuration: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Create reporter
