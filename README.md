@@ -56,7 +56,7 @@ cbz-compress -i ./comics -q 85 -max-dim 1600
 | `-recursive` | `-r` | true | Process directories recursively |
 | `-workers` | `-w` | CPU count | Number of parallel workers |
 | `-dry-run` | | false | Preview without modifying |
-| `-force` | `-f` | false | Process even if file appears optimized |
+| `-force` | `-f` | false | Process even if file appears optimized; re-encodes all pages and replaces the file even if the savings guard would keep it |
 | `-threshold` | `-t` | 3 | MB/page threshold for skip heuristic |
 | `-min-savings` | | 5 | Minimum savings percent required to replace a file (0-100) |
 | `-verbose` | `-v` | false | Show detailed progress |
@@ -94,7 +94,7 @@ skip_patterns:
 1. **Analysis**: Scans each page in the CBZ archive and measures average page size
 2. **Skip Check**: Files below the threshold are assumed optimized and skipped
 3. **Per-Page Processing**: Only pages that individually need work (oversized or non-JPEG) are resized/converted; all other pages are copied byte-identical. If the file exceeds the MB/page threshold (or `-force` is set), every page is re-encoded
-4. **Savings Guard**: The original is only replaced if the result is at least `min_savings_pct` percent smaller — otherwise the file is kept untouched (`[KEPT]` in the output)
+4. **Savings Guard**: The original is only replaced if the result is at least `min_savings_pct` percent smaller — otherwise the file is kept untouched (`[KEPT]` in the output). `-force` bypasses the guard: it is an explicit request to re-encode and always replaces
 5. **Backup**: Original files are saved to the backup directory before replacement
 
 ## Requirements

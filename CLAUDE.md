@@ -58,7 +58,7 @@ internal/
 
 3. **Atomic Writes** (`cbz/writer.go`): Creates temp file, writes compressed CBZ, then atomically renames to final path.
 
-4. **Savings Guard**: The original is only replaced if the compressed result is at least `min_savings_pct` percent smaller (default 5). Otherwise the original is kept untouched and reported as `[KEPT]`.
+4. **Savings Guard**: The original is only replaced if the compressed result is at least `min_savings_pct` percent smaller (default 5). Otherwise the original is kept untouched and reported as `[KEPT]`. `-force` bypasses the guard (explicit re-encode request always replaces).
 
 5. **Backup Safety** (`backup/`): Original files are moved to backup directory before replacement. Restore is attempted on failure.
 
