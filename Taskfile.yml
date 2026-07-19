@@ -1,7 +1,7 @@
 version: "3"
 
 vars:
-  BINARY_NAME: compress_comics
+  BINARY_NAME: cbz-compress
 
 tasks:
   build:

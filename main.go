@@ -7,9 +7,9 @@ import (
 	"os"
 	"runtime"
 
-	"compress_comics/internal/analyzer"
-	"compress_comics/internal/config"
-	"compress_comics/internal/processor"
+	"cbz-compress/internal/analyzer"
+	"cbz-compress/internal/config"
+	"cbz-compress/internal/processor"
 )
 
 //go:embed cbz-compress.yaml

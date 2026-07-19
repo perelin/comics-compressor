@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"compress_comics/internal/analyzer"
-	"compress_comics/internal/backup"
-	"compress_comics/internal/cbz"
-	"compress_comics/internal/config"
+	"cbz-compress/internal/analyzer"
+	"cbz-compress/internal/backup"
+	"cbz-compress/internal/cbz"
+	"cbz-compress/internal/config"
 )
 
 // Result tracks the outcome of processing a single CBZ

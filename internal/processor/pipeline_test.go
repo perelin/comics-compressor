@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"compress_comics/internal/cbz"
-	"compress_comics/internal/config"
+	"cbz-compress/internal/cbz"
+	"cbz-compress/internal/config"
 )
 
 // testConfig returns a config suitable for tests: high MB/page threshold so
