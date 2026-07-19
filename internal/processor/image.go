@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"compress_comics/internal/cbz"
+	"cbz-compress/internal/cbz"
 
 	"github.com/disintegration/imaging"
 )
